@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Wumpus Logic Agent</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,900;1,700&family=DM+Mono&family=Syne:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px 0;
+        font-family: "DM Mono", monospace;
+      }
+
+      #app {
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        color: white;
+        text-align: center;
+        margin-bottom: 30px;
+        font-weight: 900;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.95);
+        border: none;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        backdrop-filter: blur(4px);
+      }
+
+      .card-body {
+        padding: 20px;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+        font-weight: 600;
+        padding: 10px 30px;
+        border-radius: 8px;
+        transition: transform 0.2s;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+
+      #grid {
+        display: inline-grid;
+        gap: 8px;
+        padding: 20px;
+        background: #f5f5f5;
+        border-radius: 8px;
+      }
+
+      .cell {
+        width: 80px;
+        height: 80px;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 600;
+        position: relative;
+        background: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .cell:hover {
+        border-color: #667eea;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+      }
+
+      .cell-label {
+        font-size: 14px;
+        font-weight: 900;
+        margin-bottom: 4px;
+      }
+
+      .cell-coord {
+        font-size: 10px;
+        color: #999;
+        font-weight: normal;
+      }
+
+      /* Cell States */
+      .cell.agent {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: #667eea;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+      }
+
+      .cell.hazard {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        border-color: #f5576c;
+        box-shadow: 0 4px 12px rgba(245, 87, 108, 0.3);
+      }
+
+      .cell.visited {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border-color: #00f2fe;
+        opacity: 0.8;
+      }
+
+      .cell.safe {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        color: white;
+        border-color: #38f9d7;
+        opacity: 0.7;
+      }
+
+      #percepts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .percept-tag {
+        display: inline-block;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .row {
+        margin-bottom: 20px;
+      }
+
+      label {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+        display: block;
+      }
+
+      .form-control {
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        padding: 10px;
+        font-family: "DM Mono", monospace;
+      }
+
+      .form-control:focus {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+
+      h5 {
+        color: #333;
+        margin-bottom: 10px;
+        font-weight: 700;
+      }
+
+      #message {
+        color: #666;
+        margin: 0;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="container mt-5">
+        <h1>Wumpus Logic Agent</h1>
+
+        <!-- Game Setup -->
+        <div class="card mb-4">
+          <div class="card-body">
+            <label>Grid Size:</label>
+            <div class="row">
+              <div class="col-md-3">
+                <input
+                  type="number"
+                  id="inp-rows"
+                  value="4"
+                  min="3"
+                  max="10"
+                  class="form-control"
+                  placeholder="Rows"
+                />
+              </div>
+              <div class="col-md-3">
+                <input
+                  type="number"
+                  id="inp-cols"
+                  value="4"
+                  min="3"
+                  max="10"
+                  class="form-control"
+                  placeholder="Cols"
+                />
+              </div>
+              <div class="col-md-3">
+                <button onclick="startGame()" class="btn btn-primary">
+                  Start Game
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Game Info -->
+        <div class="row">
+          <div class="col-md-6">
+            <div class="card mb-4">
+              <div class="card-body">
+                <h5>Inference Steps: <span id="steps">0</span></h5>
+                <p id="message"></p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="card mb-4">
+              <div class="card-body">
+                <h5>Percepts:</h5>
+                <div id="percepts"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Grid -->
+        <div class="card">
+          <div class="card-body">
+            <div id="grid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const SESSION = "wumpus_" + Math.random().toString(36).slice(2, 8);
+
+      // Start game — calls Python backend
+      async function startGame() {
+        const rows = +document.getElementById("inp-rows").value;
+        const cols = +document.getElementById("inp-cols").value;
+
+        const res = await fetch("http://localhost:5000/api/new_game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows, cols, session_id: SESSION }),
+        });
+
+        const data = await res.json();
+        renderState(data);
+      }
+
+      // Move agent
+      async function doMove(dir) {
+        const res = await fetch("http://localhost:5000/api/move", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction: dir, session_id: SESSION }),
+        });
+        const data = await res.json();
+        renderState(data);
+      }
+
+      // Shoot arrow
+      async function doShoot(dir) {
+        const res = await fetch("http://localhost:5000/api/shoot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction: dir, session_id: SESSION }),
+        });
+        const data = await res.json();
+        renderState(data);
+      }
+
+      // Render whatever the backend returns
+      function renderState(data) {
+        // update grid, metrics, percepts from data
+        document.getElementById("steps").textContent =
+          data.total_inference_steps;
+        document.getElementById("message").textContent = data.message;
+        renderGrid(data);
+        renderPercepts(data.percepts);
+      }
+
+      function renderGrid(data) {
+        const wrap = document.getElementById("grid");
+        wrap.innerHTML = "";
+        wrap.style.gridTemplateColumns = `repeat(${data.cols}, 80px)`;
+
+        for (let r = 0; r < data.rows; r++) {
+          for (let c = 0; c < data.cols; c++) {
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            cell.dataset.cell = `${r}_${c}`;
+
+            const isAgent = data.agent[0] === r && data.agent[1] === c;
+            const isVisited = data.visited.some(
+              (v) => v[0] === r && v[1] === c,
+            );
+            const isSafe = data.safe_cells.some(
+              (s) => s[0] === r && s[1] === c,
+            );
+            const isHazard = data.confirmed_hazards.some(
+              (h) => h[0] === r && h[1] === c,
+            );
+
+            if (isAgent) cell.classList.add("agent");
+            else if (isHazard) cell.classList.add("hazard");
+            else if (isVisited) cell.classList.add("visited");
+            else if (isSafe) cell.classList.add("safe");
+
+            // Text labels
+            if (isAgent)
+              cell.innerHTML = '<span class="cell-label">AGENT</span>';
+            else if (isHazard)
+              cell.innerHTML = '<span class="cell-label">HAZARD</span>';
+
+            cell.innerHTML += `<span class="cell-coord">[${r},${c}]</span>`;
+            wrap.appendChild(cell);
+          }
+        }
+      }
+
+      function renderPercepts(percepts) {
+        const box = document.getElementById("percepts");
+        box.innerHTML = percepts
+          .map((p) => `<span class="percept-tag">${p}</span>`)
+          .join("");
+      }
+
+      // Keyboard support
+      document.addEventListener("keydown", (e) => {
+        const map = {
+          ArrowUp: "up",
+          ArrowDown: "down",
+          ArrowLeft: "left",
+          ArrowRight: "right",
+        };
+        if (map[e.key]) {
+          e.preventDefault();
+          doMove(map[e.key]);
+        }
+      });
+    </script>
+  </body>
+</html>
