@@ -3,6 +3,7 @@ from flask_cors import CORS
 import random
 import json
 from itertools import product as iproduct
+from collections import defaultdict
 
 import os
 
@@ -75,48 +76,54 @@ def resolve(c1, c2):
     return resolvents
 
 
-def resolution_refutation(kb_clauses, query_literal):
+def resolution_refutation(kb_clauses, query_literal, known_facts=None):
     """
-    Resolution Refutation: prove that query_literal follows from KB.
-    We negate the query and try to derive the empty clause (contradiction).
-    Returns (proved: bool, steps: int, trace: list)
+    Fast resolution refutation with fact short-circuiting and indexed pair expansion.
+    Returns (proved: bool, steps: int, trace: list).
     """
-    # Negate the query and add to KB
-    negated_query = Clause([query_literal.negate()])
-    clauses = set(kb_clauses) | {negated_query}
+    if known_facts is not None:
+        fact = known_facts.get(query_literal.name)
+        if fact is not None:
+            return fact != query_literal.negated, 0, []
+
+    clauses = set(kb_clauses)
+    clauses.add(Clause([query_literal.negate()]))
     steps = 0
-    trace = []
-    new_clauses = set()
 
-    while True:
-        pairs = [(c1, c2) for c1 in clauses for c2 in clauses if c1 != c2]
-        found_new = False
+    clause_index = defaultdict(set)
+    for clause in clauses:
+        for literal in clause.literals:
+            clause_index[(literal.name, literal.negated)].add(clause)
 
-        for (c1, c2) in pairs:
-            resolvents = resolve(c1, c2)
-            for r in resolvents:
-                steps += 1
-                trace.append({
-                    "step": steps,
-                    "c1": str(c1),
-                    "c2": str(c2),
-                    "resolvent": str(r)
-                })
-                if r.is_empty():
-                    return True, steps, trace
-                if r not in clauses:
-                    new_clauses.add(r)
-                    found_new = True
+    processed_pairs = set()
+    pending = list(clauses)
 
-        if not found_new:
-            return False, steps, trace
+    while pending:
+        clause = pending.pop()
+        for literal in clause.literals:
+            candidates = clause_index.get((literal.name, not literal.negated), ())
+            for other in candidates:
+                if clause == other:
+                    continue
+                pair = frozenset((clause, other))
+                if pair in processed_pairs:
+                    continue
+                processed_pairs.add(pair)
 
-        clauses |= new_clauses
-        new_clauses = set()
+                for resolvent in resolve(clause, other):
+                    steps += 1
+                    if resolvent.is_empty():
+                        return True, steps, []
+                    if resolvent not in clauses:
+                        clauses.add(resolvent)
+                        pending.append(resolvent)
+                        for lit in resolvent.literals:
+                            clause_index[(lit.name, lit.negated)].add(resolvent)
 
-        # Safety cap
-        if steps > 2000:
-            return False, steps, trace
+                    if steps > 500:
+                        return False, steps, []
+
+    return False, steps, []
 
 
 # ─────────────────────────────────────────────
@@ -127,9 +134,11 @@ class KnowledgeBase:
     def __init__(self):
         self.clauses = set()
         self.facts = {}   # variable_name -> True/False
+        self.query_cache = {}
 
     def tell(self, clause):
         self.clauses.add(clause)
+        self.query_cache.clear()
 
     def tell_fact(self, name, value):
         """Assert a ground fact."""
@@ -138,37 +147,42 @@ class KnowledgeBase:
             self.tell(Clause([Literal(name, negated=False)]))
         else:
             self.tell(Clause([Literal(name, negated=True)]))
+        self.query_cache.clear()
 
     def ask_safe(self, row, col):
         """
         Ask: is cell (row,col) safe? i.e., no pit AND no wumpus.
         Returns (is_safe, inference_steps, trace)
         """
+        cache_key = (row, col)
+        cached = self.query_cache.get(cache_key)
+        if cached is not None:
+            return cached[0], cached[1], []
+
         pit_var = f"P_{row}_{col}"
         wumpus_var = f"W_{row}_{col}"
 
-        # Check if already known unsafe
-        if self.facts.get(pit_var) or self.facts.get(wumpus_var):
+        pit_fact = self.facts.get(pit_var)
+        wumpus_fact = self.facts.get(wumpus_var)
+
+        if pit_fact is True or wumpus_fact is True:
+            self.query_cache[cache_key] = (False, 0)
             return False, 0, []
 
-        # Prove ¬P AND ¬W via resolution
-        total_steps = 0
-        full_trace = []
+        if pit_fact is False and wumpus_fact is False:
+            self.query_cache[cache_key] = (True, 0)
+            return True, 0, []
 
-        # we want to prove ¬P, so negate = prove P leads to contradiction
-        no_pit_lit = Literal(pit_var, negated=False)
         proved_no_pit, steps1, trace1 = resolution_refutation(
-            self.clauses, Literal(pit_var, negated=True))
-        total_steps += steps1
-        full_trace.extend(trace1)
+            self.clauses, Literal(pit_var, negated=True), self.facts)
 
         proved_no_wumpus, steps2, trace2 = resolution_refutation(
-            self.clauses, Literal(wumpus_var, negated=True))
-        total_steps += steps2
-        full_trace.extend(trace2)
+            self.clauses, Literal(wumpus_var, negated=True), self.facts)
 
         is_safe = proved_no_pit and proved_no_wumpus
-        return is_safe, total_steps, full_trace
+        total_steps = steps1 + steps2
+        self.query_cache[cache_key] = (is_safe, total_steps)
+        return is_safe, total_steps, []
 
     def add_breeze_rule(self, row, col, rows, cols):
         """
@@ -254,6 +268,7 @@ def create_game(rows, cols, num_pits=None):
         "game_over": False,
         "win": False,
         "kb": kb,
+        "frontier": set(),
         "total_inference_steps": 0,
         "percepts": [],
         "message": "Agent starts at (0,0). Exploring...",
@@ -272,11 +287,6 @@ def _process_percepts(state):
     kb = state["kb"]
     percepts = []
 
-    has_breeze = any((r, c) in get_neighbors(pr, pc, rows, cols) + [(pr, pc)]
-                     for pr, pc in state["pits"]
-                     if (pr, pc) in [n for n in get_neighbors(r, c, rows, cols)] or (pr == r and pc == c))
-
-    # Proper breeze check: adjacent to any pit?
     has_breeze = any((nr, nc) in state["pits"]
                      for nr, nc in get_neighbors(r, c, rows, cols))
     has_stench = any((nr, nc) == state["wumpus"] for nr, nc in get_neighbors(
@@ -307,6 +317,10 @@ def _process_percepts(state):
         percepts.append("Glitter!")
 
     state["percepts"] = percepts
+    frontier = state.setdefault("frontier", set())
+    for nr, nc in get_neighbors(r, c, rows, cols):
+        if [nr, nc] not in state["visited"] and [nr, nc] not in state["safe_cells"]:
+            frontier.add((nr, nc))
 
 
 def _infer_safe_cells(state):
@@ -314,22 +328,25 @@ def _infer_safe_cells(state):
     kb = state["kb"]
     new_safe = []
     total_steps = 0
-    trace = []
 
-    for r in range(rows):
-        for c in range(cols):
-            cell = [r, c]
-            if cell in state["visited"]:
-                continue
-            is_safe, steps, cell_trace = kb.ask_safe(r, c)
-            total_steps += steps
-            trace.extend(cell_trace)
-            if is_safe and cell not in state["safe_cells"]:
-                state["safe_cells"].append(cell)
-                new_safe.append(cell)
+    frontier = state.setdefault("frontier", set())
+    while frontier:
+        r, c = frontier.pop()
+        cell = [r, c]
+        if cell in state["visited"] or cell in state["safe_cells"] or cell in state["confirmed_hazards"]:
+            continue
+
+        is_safe, steps, _ = kb.ask_safe(r, c)
+        total_steps += steps
+        if is_safe:
+            state["safe_cells"].append(cell)
+            new_safe.append(cell)
+            for nr, nc in get_neighbors(r, c, rows, cols):
+                if [nr, nc] not in state["visited"] and [nr, nc] not in state["safe_cells"]:
+                    frontier.add((nr, nc))
 
     state["total_inference_steps"] += total_steps
-    state["resolution_trace"] = trace[-20:]  # keep last 20 steps
+    state["resolution_trace"] = []
     return new_safe
 
 
@@ -406,7 +423,7 @@ def move():
         state["game_over"] = True
         state["win"] = False
         state["confirmed_hazards"].append([nr, nc])
-        state["message"] = f"💀 Agent fell into a pit at ({nr},{nc})! Game Over."
+        state["message"] = f"Agent fell into a pit at ({nr},{nc}). Game over."
         state["percepts"] = ["FELL IN PIT"]
         return jsonify(serialize_state(state))
 
@@ -414,7 +431,7 @@ def move():
         state["game_over"] = True
         state["win"] = False
         state["confirmed_hazards"].append([nr, nc])
-        state["message"] = f"💀 Agent was eaten by the Wumpus at ({nr},{nc})! Game Over."
+        state["message"] = f"Agent was eaten by the Wumpus at ({nr},{nc}). Game over."
         state["percepts"] = ["EATEN BY WUMPUS"]
         return jsonify(serialize_state(state))
 
@@ -424,7 +441,7 @@ def move():
     # Check gold
     if (nr, nc) == state["gold"] or [nr, nc] == list(state["gold"]):
         state["has_gold"] = True
-        state["message"] = f"✨ Gold found at ({nr},{nc})! Head back to (0,0) to win!"
+        state["message"] = f"Gold found at ({nr},{nc}). Return to (0,0) to win."
         if "Glitter!" not in state["percepts"]:
             state["percepts"].append("Glitter!")
     else:
@@ -433,7 +450,7 @@ def move():
     if state["has_gold"] and state["agent"] == [0, 0]:
         state["game_over"] = True
         state["win"] = True
-        state["message"] = "🏆 Agent returned with the gold! YOU WIN!"
+        state["message"] = "Agent returned with the gold. You win."
 
     return jsonify(serialize_state(state))
 
@@ -470,10 +487,10 @@ def shoot():
         state["confirmed_hazards"].append(list(state["wumpus"]))
         state["kb"].tell_fact(
             f"W_{state['wumpus'][0]}_{state['wumpus'][1]}", False)
-        state["message"] = f"🏹 Arrow hit! Wumpus is dead! Screech heard!"
+        state["message"] = "Arrow hit. Wumpus is dead."
         state["percepts"] = state["percepts"] + ["Scream! Wumpus Killed!"]
     else:
-        state["message"] = "🏹 Arrow missed..."
+        state["message"] = "Arrow missed."
 
     _infer_safe_cells(state)
     return jsonify(serialize_state(state))

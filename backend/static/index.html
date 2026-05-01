@@ -254,8 +254,7 @@
 
     <script>
       const SESSION = "wumpus_" + Math.random().toString(36).slice(2, 8);
-      const API_BASE =
-        "https://wumpus-u9i8.onrender.com/" || "http://localhost:5000";
+      const API_BASE = (window.API_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
 
       // Start game — calls Python backend
       async function startGame() {
@@ -306,7 +305,8 @@
 
       function renderGrid(data) {
         const wrap = document.getElementById("grid");
-        wrap.innerHTML = "";
+        const fragment = document.createDocumentFragment();
+        wrap.replaceChildren();
         wrap.style.gridTemplateColumns = `repeat(${data.cols}, 80px)`;
 
         for (let r = 0; r < data.rows; r++) {
@@ -338,9 +338,11 @@
               cell.innerHTML = '<span class="cell-label">HAZARD</span>';
 
             cell.innerHTML += `<span class="cell-coord">[${r},${c}]</span>`;
-            wrap.appendChild(cell);
+            fragment.appendChild(cell);
           }
         }
+
+        wrap.appendChild(fragment);
       }
 
       function renderPercepts(percepts) {
