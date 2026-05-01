@@ -254,7 +254,8 @@
 
     <script>
       const SESSION = "wumpus_" + Math.random().toString(36).slice(2, 8);
-      const API_BASE = window.API_BASE_URL || "http://localhost:5000";
+      const API_BASE =
+        "https://wumpus-u9i8.onrender.com/" || "http://localhost:5000";
 
       // Start game — calls Python backend
       async function startGame() {
